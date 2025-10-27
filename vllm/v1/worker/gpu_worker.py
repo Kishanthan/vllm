@@ -480,7 +480,16 @@ class Worker(WorkerBase):
                 self.vllm_config, num_input_tokens
             )
         }
-        if forward_pass and not get_pp_group().is_first_rank:
+        # IMPORTANT: For Ray Compiled Graph, we must always participate in
+        # recv_tensor_dict even when there are no scheduled tokens (forward_pass=False).
+        # This is because Ray Compiled Graph requires all workers to participate in
+        # communication operations to maintain synchronization, otherwise we get
+        # RayChannelTimeoutError and channel closed errors.
+        # For multiprocess executor, we can optimize by only receiving when needed.
+        parallel_config = self.vllm_config.parallel_config
+        is_ray_executor = parallel_config.distributed_executor_backend == "ray"
+
+        if not get_pp_group().is_first_rank and (forward_pass or is_ray_executor):
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict(
                     all_gather_group=get_tp_group(),

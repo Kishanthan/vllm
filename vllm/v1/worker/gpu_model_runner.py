@@ -2420,6 +2420,25 @@ class GPUModelRunner(LoRAModelRunnerMixin, KVConnectorModelRunnerMixin):
                 self._update_states(scheduler_output)
 
                 if not scheduler_output.total_num_scheduled_tokens:
+                    # IMPORTANT: For Ray Compiled Graph with pipeline parallelism,
+                    # non-last ranks must return IntermediateTensors (even empty) so
+                    # they can send them to maintain DAG synchronization. Otherwise
+                    # we get RayChannelTimeoutError.
+                    is_ray_executor = (
+                        self.parallel_config.distributed_executor_backend == "ray"
+                    )
+                    pp_size = self.parallel_config.pipeline_parallel_size
+                    is_pp_non_last = pp_size > 1 and not get_pp_group().is_last_rank
+
+                    if is_ray_executor and is_pp_non_last:
+                        # Return empty IntermediateTensors for PP communication
+                        empty_tensors = self.model.make_empty_intermediate_tensors(
+                            batch_size=1,  # Minimal batch size
+                            dtype=self.model_config.dtype,
+                            device=self.device,
+                        )
+                        return IntermediateTensors(empty_tensors)
+
                     if not has_kv_transfer_group():
                         # Return empty ModelRunnerOutput if no work to do.
                         return EMPTY_MODEL_RUNNER_OUTPUT
