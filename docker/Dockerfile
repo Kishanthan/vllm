@@ -85,8 +85,9 @@ ARG GET_PIP_URL
 # Install system dependencies and uv, then create Python virtual environment
 RUN echo 'tzdata tzdata/Areas select America' | debconf-set-selections \
     && echo 'tzdata tzdata/Zones/America select Los_Angeles' | debconf-set-selections \
-    && apt-get update -y \
-    && apt-get install -y ccache software-properties-common git curl sudo python3-pip \
+    && apt-get clean && rm -rf /var/lib/apt/lists/* \
+    && apt-get update -y --fix-missing || apt-get update -y --fix-missing \
+    && apt-get install -y --fix-missing --no-install-recommends ccache software-properties-common git curl sudo python3-pip \
     && curl -LsSf https://astral.sh/uv/install.sh | sh \
     && $HOME/.local/bin/uv venv /opt/venv --python ${PYTHON_VERSION} \
     && rm -f /usr/bin/python3 /usr/bin/python3-config /usr/bin/pip \
