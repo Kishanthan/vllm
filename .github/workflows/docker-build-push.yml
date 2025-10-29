@@ -16,7 +16,7 @@ env:
 
 jobs:
   build-and-push:
-    runs-on: ubuntu-latest-8-cores
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
@@ -83,8 +83,8 @@ jobs:
           build-args: |
             CUDA_VERSION=12.9.1
             PYTHON_VERSION=3.12
-            max_jobs=6
-            nvcc_threads=4
+            max_jobs=2
+            nvcc_threads=2
 
       - name: Output image tags
         run: |
