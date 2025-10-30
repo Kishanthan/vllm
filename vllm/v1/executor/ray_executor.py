@@ -103,7 +103,12 @@ class RayDistributedExecutor(Executor):
         """
         if self.scheduler_config.async_scheduling:
             return 2
-        return self.parallel_config.pipeline_parallel_size
+        # WORKAROUND: Force single batch execution for Ray Compiled DAG to avoid
+        # channel synchronization issues with multi-node PP setups.
+        # Ray Compiled DAG doesn't handle concurrent executions properly in
+        # multi-node environments, causing RayChannelTimeoutError.
+        return 1
+        # return self.parallel_config.pipeline_parallel_size
 
     def shutdown(self) -> None:
         if logger:
