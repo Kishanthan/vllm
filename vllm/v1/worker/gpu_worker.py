@@ -472,24 +472,14 @@ class Worker(WorkerBase):
         scheduler_output: "SchedulerOutput",
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | None:
         intermediate_tensors = None
-        forward_pass = scheduler_output.total_num_scheduled_tokens > 0
-        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
-        num_input_tokens = self.model_runner._get_num_input_tokens(num_scheduled_tokens)
-        all_gather_tensors = {
-            "residual": not is_residual_scattered_for_sp(
-                self.vllm_config, num_input_tokens
-            )
-        }
-        # IMPORTANT: For Ray Compiled Graph, we must always participate in
-        # recv_tensor_dict even when there are no scheduled tokens (forward_pass=False).
-        # This is because Ray Compiled Graph requires all workers to participate in
-        # communication operations to maintain synchronization, otherwise we get
-        # RayChannelTimeoutError and channel closed errors.
-        # For multiprocess executor, we can optimize by only receiving when needed.
-        parallel_config = self.vllm_config.parallel_config
-        is_ray_executor = parallel_config.distributed_executor_backend == "ray"
-
-        if not get_pp_group().is_first_rank and (forward_pass or is_ray_executor):
+        if not get_pp_group().is_first_rank:
+            num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+            num_input_tokens = self.model_runner._get_num_input_tokens(num_scheduled_tokens)
+            all_gather_tensors = {
+                "residual": not is_residual_scattered_for_sp(
+                    self.vllm_config, num_input_tokens
+                )
+            }
             intermediate_tensors = IntermediateTensors(
                 get_pp_group().recv_tensor_dict(
                     all_gather_group=get_tp_group(),
@@ -498,33 +488,36 @@ class Worker(WorkerBase):
             )
 
         output = self.model_runner.execute_model(scheduler_output, intermediate_tensors)
-        if isinstance(output, (ModelRunnerOutput, AsyncModelRunnerOutput)):
+
+        parallel_config = self.vllm_config.parallel_config
+        if parallel_config.distributed_executor_backend != "external_launcher" \
+            and not get_pp_group().is_last_rank:
+            num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+            num_input_tokens = self.model_runner._get_num_input_tokens(num_scheduled_tokens)
+            all_gather_tensors = {
+                "residual": not is_residual_scattered_for_sp(
+                    self.vllm_config, num_input_tokens
+                )
+            }
+            assert isinstance(output, IntermediateTensors)
+            get_pp_group().send_tensor_dict(output.tensors,
+                                            all_gather_group=get_tp_group(),
+                                            all_gather_tensors=all_gather_tensors)
+
+            kv_connector_output = output.kv_connector_output
+            if not kv_connector_output:
+                return None
+
+            # In case of PP with kv transfer, we need to pass through the
+            # kv_connector_output
+            if kv_connector_output.is_empty():
+                return EMPTY_MODEL_RUNNER_OUTPUT
+
+            output = copy.copy(EMPTY_MODEL_RUNNER_OUTPUT)
+            output.kv_connector_output = kv_connector_output
             return output
 
-        assert isinstance(output, IntermediateTensors)
-        parallel_config = self.vllm_config.parallel_config
-        assert (
-            parallel_config.distributed_executor_backend != ("external_launcher")
-            and not get_pp_group().is_last_rank
-        )
-
-        get_pp_group().send_tensor_dict(
-            output.tensors,
-            all_gather_group=get_tp_group(),
-            all_gather_tensors=all_gather_tensors,
-        )
-
-        kv_connector_output = output.kv_connector_output
-        if not kv_connector_output:
-            return None
-
-        # In case of PP with kv transfer, we need to pass through the
-        # kv_connector_output
-        if kv_connector_output.is_empty():
-            return EMPTY_MODEL_RUNNER_OUTPUT
-
-        output = copy.copy(EMPTY_MODEL_RUNNER_OUTPUT)
-        output.kv_connector_output = kv_connector_output
+        assert isinstance(output, (ModelRunnerOutput, AsyncModelRunnerOutput))
         return output
 
     def take_draft_token_ids(self) -> DraftTokenIds | None:

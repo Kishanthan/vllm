@@ -205,9 +205,6 @@ class MultiprocExecutor(Executor):
             return self.kv_output_aggregator.async_aggregate(outputs, self.output_rank)
         return self.kv_output_aggregator.aggregate(outputs, self.output_rank)
 
-    def execute_dummy_batch(self) -> None:
-        self.collective_rpc("execute_dummy_batch", unique_reply_rank=self.output_rank)
-
     def take_draft_token_ids(self) -> DraftTokenIds | None:
         # OPTIMIZATION: Get output only from a single worker (output_rank)
         outputs = self.collective_rpc(
@@ -272,19 +269,13 @@ class MultiprocExecutor(Executor):
                     None if deadline is None else (deadline - time.monotonic())
                 )
 
-                if self.io_thread_pool is not None:
-                    # We must consume worker_response_mq from a single thread.
+                if non_block:
                     result = self.io_thread_pool.submit(  # type: ignore
                         get_response, w, dequeue_timeout, self.shutdown_event
                     )
-                    if not non_block:
-                        result = result.result()
-                elif not non_block:
-                    result = get_response(w, dequeue_timeout, self.shutdown_event)
                 else:
-                    raise RuntimeError(
-                        "non_block can only be used when max_concurrent_batches > 1"
-                    )
+                    result = get_response(w, dequeue_timeout, self.shutdown_event)
+
                 responses.append(result)
 
             return responses

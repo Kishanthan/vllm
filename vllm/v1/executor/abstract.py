@@ -120,10 +120,12 @@ class Executor(ABC):
         pass
 
     def determine_available_memory(self) -> list[int]:  # in bytes
-        return self.collective_rpc("determine_available_memory")
+        output = self.collective_rpc("determine_available_memory")
+        return output
 
     def get_kv_cache_specs(self) -> list[dict[str, KVCacheSpec]]:
-        return self.collective_rpc("get_kv_cache_spec")
+        output = self.collective_rpc("get_kv_cache_spec")
+        return output
 
     @overload
     def collective_rpc(
@@ -200,9 +202,6 @@ class Executor(ABC):
             "execute_model", args=(scheduler_output,), non_block=non_block
         )
         return output[0]
-
-    def execute_dummy_batch(self) -> None:
-        self.collective_rpc("execute_dummy_batch")
 
     def take_draft_token_ids(self) -> DraftTokenIds | None:
         output: list[DraftTokenIds] = self.collective_rpc("take_draft_token_ids")
