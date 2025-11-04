@@ -363,12 +363,12 @@ class OpenPanguMLAAttention(nn.Module):
             kv_b_proj=self.kv_b_proj,
             rotary_emb=self.rotary_emb,
             o_proj=self.o_proj,
-            fused_qkv_a_proj=self.fused_qkv_a_proj
-            if self.q_lora_rank is not None
-            else None,
-            kv_a_proj_with_mqa=self.kv_a_proj_with_mqa
-            if self.q_lora_rank is None
-            else None,
+            fused_qkv_a_proj=(
+                self.fused_qkv_a_proj if self.q_lora_rank is not None else None
+            ),
+            kv_a_proj_with_mqa=(
+                self.kv_a_proj_with_mqa if self.q_lora_rank is None else None
+            ),
             q_a_layernorm=self.q_a_layernorm if self.q_lora_rank is not None else None,
             q_b_proj=self.q_b_proj if self.q_lora_rank is not None else None,
             q_proj=self.q_proj if self.q_lora_rank is None else None,
@@ -811,7 +811,8 @@ class OpenPanguModel(nn.Module):
                 continue
             if is_pp_missing_parameter(weight_name, self):
                 continue
-
+            if weight_name not in params_dict:
+                continue
             param = params_dict[weight_name]
             weight_loader = param.weight_loader
             weight_loader(param, loaded_weight, shard_id)
@@ -835,6 +836,8 @@ class OpenPanguModel(nn.Module):
             flag_dict["is_expert_weight"] = True
             weight_name_mapped = weight_name.replace(origin_name, param_name)
             if is_pp_missing_parameter(weight_name_mapped, self):
+                continue
+            if weight_name_mapped not in params_dict:
                 continue
             param = params_dict[weight_name_mapped]
             weight_loader = typing.cast(Callable[..., bool], param.weight_loader)
@@ -919,6 +922,9 @@ class OpenPanguModel(nn.Module):
                 if name is None:
                     continue
                 if is_pp_missing_parameter(name, self):
+                    continue
+
+                if name not in params_dict:
                     continue
 
                 param = params_dict[name]
